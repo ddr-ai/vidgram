@@ -15,7 +15,7 @@ let client;
 let stringSession = new StringSession(process.env.TELEGRAM_SESSION || '');
 
 // Session management
-let sessionFile = path.join(__dirname, 'session.txt');
+let sessionFile = path.join('/tmp', 'telegram-session.txt');
 const fs = require('fs');
 
 // Load existing session if available
@@ -58,6 +58,21 @@ async function initTelegram() {
   console.log('Telegram client connected');
   return client;
 }
+
+app.get('/', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'vidgram-backend',
+    api: '/api'
+  });
+});
+
+app.get('/api', (req, res) => {
+  res.json({
+    ok: true,
+    endpoints: ['/api/check-auth', '/api/login', '/api/logout', '/api/dialogs', '/api/videos/:chatId', '/api/stream/:chatId/:messageId']
+  });
+});
 
 // Login endpoint
 app.post('/api/login', async (req, res) => {
@@ -111,17 +126,20 @@ app.post('/api/login', async (req, res) => {
 // Check if already logged in
 app.get('/api/check-auth', async (req, res) => {
   try {
-    if (fs.existsSync(sessionFile)) {
-      const savedSession = fs.readFileSync(sessionFile, 'utf8').trim();
-      if (savedSession) {
-        await initTelegram();
-        const me = await client.getMe();
-        return res.json({ 
-          success: true, 
-          loggedIn: true,
-          user: { id: me.id.toString(), username: me.username, firstName: me.firstName }
-        });
+    if (process.env.TELEGRAM_SESSION || fs.existsSync(sessionFile)) {
+      if (fs.existsSync(sessionFile)) {
+        const savedSession = fs.readFileSync(sessionFile, 'utf8').trim();
+        if (savedSession) {
+          stringSession = new StringSession(savedSession);
+        }
       }
+      await initTelegram();
+      const me = await client.getMe();
+      return res.json({ 
+        success: true, 
+        loggedIn: true,
+        user: { id: me.id.toString(), username: me.username, firstName: me.firstName }
+      });
     }
     res.json({ success: true, loggedIn: false });
   } catch (error) {
@@ -272,7 +290,11 @@ app.get('/api/stream/:chatId/:messageId', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Backend server running on port ${PORT}`);
-  console.log(`API available at http://localhost:${PORT}/api`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Backend server running on port ${PORT}`);
+    console.log(`API available at http://localhost:${PORT}/api`);
+  });
+}
+
+module.exports = app;
