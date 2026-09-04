@@ -28,6 +28,7 @@ jobs:
         working-directory: frontend
         env:
           PUBLIC_URL: /vidgram
+          REACT_APP_API_URL: https://vidgram-api.vercel.app/api
           CI: false
         run: |
           npm install
