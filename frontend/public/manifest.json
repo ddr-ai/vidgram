@@ -1,0 +1,9 @@
+{
+  "short_name": "TG Viewer",
+  "name": "Telegram Media Viewer",
+  "icons": [],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}
