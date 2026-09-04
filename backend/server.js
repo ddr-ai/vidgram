@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
-const { TelegramClient } = require('telegram');
+const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
+const { computeCheck } = require('telegram/Password');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
@@ -37,9 +38,22 @@ function persistSession() {
   }
 }
 
+function normalizePhone(phone) {
+  const raw = String(phone || '').trim();
+  const cleaned = raw.replace(/[^\d+]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('+')) return cleaned;
+  if (cleaned.startsWith('00')) return `+${cleaned.slice(2)}`;
+  return `+${cleaned}`;
+}
+
 async function initTelegram() {
   if (client && client.connected) {
     return client;
+  }
+
+  if (!process.env.TELEGRAM_API_ID || !process.env.TELEGRAM_API_HASH) {
+    throw new Error('TELEGRAM_API_ID and TELEGRAM_API_HASH must be set on the server');
   }
 
   client = new TelegramClient(
@@ -137,46 +151,71 @@ app.get('/api', (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { phoneNumber, phoneCode, phoneCodeHash, password } = req.body;
+    const phoneNumber = normalizePhone(req.body.phoneNumber);
+    const phoneCode = req.body.phoneCode;
+    const phoneCodeHash = req.body.phoneCodeHash;
+    const password = req.body.password;
 
-    if (!client || !client.connected) {
-      await initTelegram();
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, error: 'Phone number is required. Use + and country code.' });
     }
 
+    await initTelegram();
+
     if (phoneCode) {
-      await client.invoke({
-        _: 'auth.signIn',
-        phoneNumber,
-        phoneCodeHash,
-        phoneCode
-      });
+      try {
+        await client.invoke(
+          new Api.auth.SignIn({
+            phoneNumber,
+            phoneCodeHash,
+            phoneCode: String(phoneCode)
+          })
+        );
+      } catch (error) {
+        const message = error.errorMessage || error.message || '';
+        if (message.includes('SESSION_PASSWORD_NEEDED')) {
+          return res.status(401).json({
+            success: false,
+            needsPassword: true,
+            error: 'PASSWORD'
+          });
+        }
+        throw error;
+      }
     } else if (password) {
-      await client.invoke({
-        _: 'auth.checkPassword',
-        password: { _: 'inputCheckPasswordSRP', srpId: req.body.srpId, A: req.body.A, M1: req.body.M1 }
-      });
+      const pwd = await client.invoke(new Api.account.GetPassword());
+      await client.invoke(
+        new Api.auth.CheckPassword({
+          password: await computeCheck(pwd, password)
+        })
+      );
     } else {
-      const result = await client.invoke({
-        _: 'auth.sendCode',
-        phoneNumber,
-        apiId: Number(process.env.TELEGRAM_API_ID),
-        apiHash: process.env.TELEGRAM_API_HASH,
-        settings: { _: 'codeSettings' }
-      });
+      const result = await client.sendCode(
+        {
+          apiId: Number(process.env.TELEGRAM_API_ID),
+          apiHash: process.env.TELEGRAM_API_HASH
+        },
+        phoneNumber
+      );
 
       return res.json({
         success: true,
         phoneCodeHash: result.phoneCodeHash,
-        timeout: result.timeout
+        timeout: result.timeout || 60
       });
     }
 
     persistSession();
     const sessionString = client.session.save();
-    res.json({ success: true, sessionString });
+    const me = await client.getMe();
+    res.json({
+      success: true,
+      sessionString,
+      user: { id: me.id.toString(), username: me.username, firstName: me.firstName }
+    });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error.errorMessage || error.message });
   }
 });
 
@@ -206,7 +245,7 @@ app.get('/api/check-auth', async (req, res) => {
 app.post('/api/logout', async (req, res) => {
   try {
     if (client && client.connected) {
-      await client.invoke({ _: 'auth.logOut' });
+      await client.invoke(new Api.auth.LogOut());
       await client.disconnect();
     }
     if (fs.existsSync(sessionFile)) {
@@ -251,7 +290,7 @@ app.get('/api/videos/:chatId', async (req, res) => {
     const messages = await client.getMessages(chatId, {
       limit,
       offsetId,
-      filter: { _: 'inputMessagesFilterVideo' }
+      filter: new Api.InputMessagesFilterVideo()
     });
 
     const videos = messages
