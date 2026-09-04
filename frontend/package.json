@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Frontend for Telegram Media Viewer",
   "private": true,
-  "homepage": "https://ddr-ai.github.io/vidgram",
+  "homepage": ".",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
